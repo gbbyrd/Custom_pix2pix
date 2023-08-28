@@ -12,9 +12,23 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--dataroot", "./datasets/facades", "--name", "facades_pix2pix",
+                "--dataroot", "./datasets/facades", "--name", "experiment2",
                 "--model", "pix2pix", "--direction", "BtoA",
-                "--crop_size", "128", "--netG", "unet_128"
+                "--crop_size", "128", "--netG", "unet_128", "--use_dist_labels"
+            ]
+        },
+        {
+            "name": "Debug pix2pix test",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataroot", "./datasets/facades", "--name", "view_trans_exp1",
+                "--model", "pix2pix", "--direction", "BtoA",
+                "--crop_size", "128", "--netG", "unet_128", 
+                "--use_dist_labels"
             ]
         }
     ]

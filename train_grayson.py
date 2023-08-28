@@ -36,9 +36,9 @@ import numpy as np
 
 class CustomDataset(Dataset):
     def __init__(self):
-        self.base_path = 'C:\\Users\\gbbyrd\Desktop\\thesis\\data\\experiment1'
+        self.base_path = '/home/nianyli/Desktop/code/thesis/experiment1'
         # img_paths = glob.glob(path+'\\*.png')
-        self.label_file_path = glob.glob(self.base_path+'\\*.json')[0]
+        self.label_file_path = glob.glob(self.base_path+'/*.json')[0]
         
         # get json data from label file path
         with open(self.label_file_path, 'r') as file:
@@ -106,6 +106,222 @@ class CustomDataset(Dataset):
     
     def __len__(self):
         return len(self.label_data)
+    
+class CustomDataset1(Dataset):
+    """Provides img2img translation unconditioned on the distance label (for testing and debugging)"""
+
+    def __init__(self):
+        self.base_path = '/home/nianyli/Desktop/code/thesis/experiment1'
+        # img_paths = glob.glob(path+'\\*.png')
+        self.label_file_path = glob.glob(self.base_path+'/*.json')[0]
+        
+        # get json data from label file path
+        with open(self.label_file_path, 'r') as file:
+            self.label_data = json.load(file)['data']
+        
+        # get the upper and lower bounds of the distance labels and normalize
+        # between 0 and 1
+        dist_min = 1000000
+        dist_max = -1000000
+        
+        for data in self.label_data:
+            if data['distance'] < dist_min:
+                dist_min = data['distance']
+            if data['distance'] > dist_max:
+                dist_max = data['distance']
+        
+        for idx, data in enumerate(self.label_data):
+            data['distance'] = (abs(data['distance'] - dist_min) / (dist_max-dist_min)) * 2 - 1
+        
+        # define the image transform
+        self.img_transform = transforms.Compose([
+            transforms.ToTensor()
+        ])
+        
+        # scrub the data for img2img translation not conditioned on distance label
+
+        self.new_data = []
+
+        for data in self.label_data:
+            if data['distance'] == -1:
+                self.new_data.append(data)
+
+        # max = -1
+        # min = 1
+        # for data in self.label_data:
+        #     if data['distance'] > max:
+        #         max = data['distance']
+        #     if data['distance'] < min:
+        #         min = data['distance']
+                
+        # print(min)
+        # print(max)
+            
+    def __getitem__(self, idx):
+        
+        data = self.new_data[idx]
+        
+        # load the ground truth image (A)
+        img_A_full_path = os.path.join(self.base_path, 
+                                       data['ground_truth_img_name'])
+        img_A = cv2.imread(img_A_full_path)
+    
+        # load the alternate view image (B)
+        img_B_full_path = os.path.join(self.base_path,
+                                       data['train_img_name'])
+        img_B = cv2.imread(img_B_full_path)
+        
+        # convert the images to a normalized tensor ([-1, 1] for each pixel rgb)
+        img_A = self.img_transform(img_A)
+        img_B = self.img_transform(img_B)
+        
+        # get distance label in tensor form
+        
+        output = dict()
+        
+        output['A'] = img_A * 2 - 1
+        output['B'] = img_B * 2 - 1
+        output['A_paths'] = data['ground_truth_img_name']
+        output['B_paths'] = data['train_img_name']
+
+        return output
+    
+    def __len__(self):
+        return len(self.new_data)
+    
+class CustomDataset2(Dataset):
+    """This dataset uses the experimental data and creates a dataset for all 
+    multiple translations per training image. That way there is not only one
+    ground truth img for each training img, but multiple ground truths based
+    on the distance label. This will help ensure that the generator learns to
+    generate an image based on the positional embedding as well."""
+
+    def __init__(self):
+        self.base_path = '/home/nianyli/Desktop/code/thesis/experiment1'
+        # img_paths = glob.glob(path+'\\*.png')
+        self.label_file_path = glob.glob(self.base_path+'/*.json')[0]
+        
+        # get json data from label file path
+        with open(self.label_file_path, 'r') as file:
+            self.label_data = json.load(file)['data']
+        
+        # get the upper and lower bounds of the distance labels and normalize
+        # between 0 and 1
+        dist_min = 1000000
+        dist_max = -1000000
+        
+        for data in self.label_data:
+            if data['distance'] < dist_min:
+                dist_min = data['distance']
+            if data['distance'] > dist_max:
+                dist_max = data['distance']
+        
+        for idx, data in enumerate(self.label_data):
+            data['distance'] = (abs(data['distance'] - dist_min) / (dist_max-dist_min)) * 2 - 1
+        
+        # group all of the training images by corresponding ground truth image
+        grouped_images = dict()
+
+        # sort the labelled data
+        self.label_data = sorted(self.label_data, key= lambda x: x['ground_truth_img_name'])
+
+        ground_truth_img_name = 'temp'
+
+        idx = 0
+        while idx < len(self.label_data):
+            data = self.label_data[idx]
+            cur_ground_truth_img_name = data['ground_truth_img_name']
+            if ground_truth_img_name != cur_ground_truth_img_name:
+                grouped_images[cur_ground_truth_img_name] = []
+                ground_truth_img_name = cur_ground_truth_img_name
+            new_data = {
+                'img_name': data['train_img_name'],
+                'original_distance_label': data['distance']
+            }
+            grouped_images[ground_truth_img_name].append(new_data)
+            idx += 1
+
+        # get more data points from the grouped images
+        for ground_truth_name in grouped_images:
+            img_group = grouped_images[ground_truth_name]
+            l = 0
+            while l < len(img_group) - 1:
+                r = l+1
+                train_img_relative_dist = img_group[l]['original_distance_label']
+                ground_truth_img_relative_dist = img_group[r]['original_distance_label']
+
+                while (abs(train_img_relative_dist-ground_truth_img_relative_dist) < 1):
+                    new_data_1 = {
+                        'ground_truth_img_name': img_group[r]['img_name'],
+                        'train_img_name': img_group[l]['img_name'],
+                        'distance': img_group[l]['original_distance_label']-img_group[r]['original_distance_label']
+                    }
+                    new_data_2 = {
+                        'ground_truth_img_name': img_group[l]['img_name'],
+                        'train_img_name': img_group[r]['img_name'],
+                        'distance': img_group[r]['original_distance_label']-img_group[l]['original_distance_label']
+                    }
+                    self.label_data.append(new_data_1)
+                    self.label_data.append(new_data_2)
+            
+                    r += 1
+
+                    if r < len(img_group):
+                        train_img_relative_dist = img_group[l]['original_distance_label']
+                        ground_truth_img_relative_dist = img_group[r]['original_distance_label']
+                    else:
+                        break
+
+                l += 1
+
+        # define the image transform
+        self.img_transform = transforms.Compose([
+            transforms.ToTensor()
+        ])
+        
+        # max = -1
+        # min = 1
+        # for data in self.label_data:
+        #     if data['distance'] > max:
+        #         max = data['distance']
+        #     if data['distance'] < min:
+        #         min = data['distance']
+                
+        # print(min)
+        # print(max)
+            
+    def __getitem__(self, idx):
+        
+        data = self.label_data[idx]
+        
+        # load the ground truth image (A)
+        img_A_full_path = os.path.join(self.base_path, 
+                                       data['ground_truth_img_name'])
+        img_A = cv2.imread(img_A_full_path)
+    
+        # load the alternate view image (B)
+        img_B_full_path = os.path.join(self.base_path,
+                                       data['train_img_name'])
+        img_B = cv2.imread(img_B_full_path)
+        
+        # convert the images to a normalized tensor ([-1, 1] for each pixel rgb)
+        img_A = self.img_transform(img_A)
+        img_B = self.img_transform(img_B)
+        
+        # get distance label in tensor form
+        
+        output = dict()
+        
+        output['A'] = img_A * 2 - 1
+        output['B'] = img_B * 2 - 1
+        output['A_paths'] = data['ground_truth_img_name']
+        output['B_paths'] = data['train_img_name']
+        output['distance_label'] = torch.unsqueeze(torch.tensor(data['distance']), 0)
+
+        return output
+    
+    def __len__(self):
+        return len(self.label_data)
 
 if __name__ == '__main__':
     
@@ -113,7 +329,7 @@ if __name__ == '__main__':
     # dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     
     dataset = torch.utils.data.DataLoader(  # create custom dataset
-            CustomDataset(),
+            CustomDataset2(),
             batch_size=opt.batch_size,
             shuffle=not opt.serial_batches,
             num_workers=int(opt.num_threads))

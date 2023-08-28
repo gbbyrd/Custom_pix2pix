@@ -58,6 +58,9 @@ class BaseOptions():
         parser.add_argument('--use_wandb', action='store_true', help='if specified, then init wandb logging')
         parser.add_argument('--wandb_project_name', type=str, default='CycleGAN-and-pix2pix', help='specify wandb project name')
         self.initialized = True
+
+        # grayson added arguments
+        parser.add_argument('--use_dist_labels', action='store_true', help='specify whether to embed distance labels into the generator')
         return parser
 
     def gather_options(self):
