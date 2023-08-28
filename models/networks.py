@@ -199,6 +199,8 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
         net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer)
     elif netD == 'pixel':     # classify if each pixel is real or fake
         net = PixelDiscriminator(input_nc, ndf, norm_layer=norm_layer)
+    elif netD == 'basic_custom':
+        net = NLayerDiscriminatorCustom(input_nc, ndf, n_layers=3, norm_layer=norm_layer)
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % netD)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -572,12 +574,20 @@ class ConditionalUnetSkipConnectionBlock(nn.Module):
     def forward(self, x, distance_label):
         if self.innermost:
             out = self.down(x)
+            
+            # unsqueeze the distance label
+            distance_label = torch.unsqueeze(distance_label, 1)
+            distance_label = torch.unsqueeze(distance_label, 1)
             embedded_label = self.embed_label(distance_label)
+            
             # concatenate the output and embedded label
             out = torch.cat((out, embedded_label), 1)
             # use 1x1 conv to modify channels
             out = self.conv_1x1(out)
             out = self.up(out)
+            
+            out = torch.cat([x, out], 1)
+            
             return out
         else:
             print("Error: Invalid use of Conditional UNet Skip Connection BLock")
@@ -653,7 +663,7 @@ class UnetSkipConnectionBlock(nn.Module):
             self.upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
-            self.down = downconv
+            self.down = self.downconv
             self.up = nn.Sequential(*[self.uprelu, self.upconv, nn.Tanh()])
             # model = down + [submodule] + up
         elif innermost:
@@ -696,11 +706,17 @@ class UnetSkipConnectionBlock(nn.Module):
         else:
             out = self.down(x)
             out = self.submodule(out, distance_label)
-            out = self.up(out)
             
+            # self.up
+            # out = self.uprelu(out)
+            # out = self.upconv(out) 
+            # out = self.upnorm(out)
+            
+            out = self.up(out)
+        
             if self.use_dropout:
                 out = self.dropout(out)
-                
+                 
         return torch.cat([x, out], 1)
                 
             
@@ -751,11 +767,71 @@ class NLayerDiscriminator(nn.Module):
         ]
 
         sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        self.sequence = sequence
         self.model = nn.Sequential(*sequence)
 
     def forward(self, input):
         """Standard forward."""
         return self.model(input)
+        # out = input
+        # print(out.size())
+        # for layer in self.sequence:
+        #     out = layer(out)
+        #     print(out.size())
+            
+        # return out
+    
+class NLayerDiscriminatorCustom(nn.Module):
+    """Defines a PatchGAN discriminator"""
+
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d):
+        """Construct a PatchGAN discriminator
+
+        Parameters:
+            input_nc (int)  -- the number of channels in input images
+            ndf (int)       -- the number of filters in the last conv layer
+            n_layers (int)  -- the number of conv layers in the discriminator
+            norm_layer      -- normalization layer
+        """
+        super(NLayerDiscriminator, self).__init__()
+        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        kw = 4
+        padw = 1
+        sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):  # gradually increase the number of filters
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            sequence += [
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                norm_layer(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2 ** n_layers, 8)
+        sequence += [
+            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            norm_layer(ndf * nf_mult),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        # self.model = nn.Sequential(*sequence)
+
+    def forward(self, input):
+        """Standard forward."""
+        # return self.model(input)
+        for layer in sequence:
+            out = layer(input)
+            print(out)
+            
+        return out
 
 
 class PixelDiscriminator(nn.Module):
