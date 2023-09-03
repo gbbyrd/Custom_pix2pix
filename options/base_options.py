@@ -61,6 +61,8 @@ class BaseOptions():
 
         # grayson added arguments
         parser.add_argument('--use_dist_labels', action='store_true', help='specify whether to embed distance labels into the generator')
+        parser.add_argument('--dist_label_type', action='store', help='specify whether to embed distance labels into the generator')
+        
         return parser
 
     def gather_options(self):

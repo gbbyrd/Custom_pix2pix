@@ -34,12 +34,40 @@ from util.visualizer import save_images
 from util import html
 
 from train_grayson import CustomDataset, CustomDataset1
+from datasets import CustomDataset2_Test, CustomDataset2
 import torch
+
+import numpy as np
+import cv2
 
 try:
     import wandb
 except ImportError:
     print('Warning: wandb package cannot be found. The option "--use_wandb" will result in error.')
+
+def grayson_visualize(visuals, name):
+    joined_img = ...
+    for idx, key in enumerate(visuals):
+        img = visuals[key].cpu().numpy()
+        img = img.squeeze()
+        img = np.transpose(img, (1, 2, 0))
+        img_compare = cv2.imread('/home/nianyli/Desktop/code/thesis/experiment4/ground_truth_000002.png')
+        
+        # de-normalize the img
+        img = (img + 1) / 2 * 255
+        img = img.astype('uint8')
+        if idx == 0:
+            joined_img = img
+        else:
+            joined_img = np.concatenate((joined_img, img), 0)
+    # cv2.imshow(key, joined_img)
+    # cv2.waitKey(0)
+    save_dir = '/home/nianyli/Desktop/code/thesis/Custom_pix2pix/results/experiment2/test_latest/images'
+    save_path = os.path.join(save_dir, name)
+    cv2.imwrite(save_path, joined_img)
+
+    what = 'yes'
+
 
 
 if __name__ == '__main__':
@@ -52,7 +80,7 @@ if __name__ == '__main__':
     opt.display_id = -1   # no visdom display; the test code saves the results to a HTML file.
     # dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset = torch.utils.data.DataLoader(  # create custom dataset
-        CustomDataset(),
+        CustomDataset2_Test(),
         batch_size=opt.batch_size,
         shuffle=not opt.serial_batches,
         num_workers=int(opt.num_threads))
@@ -75,14 +103,24 @@ if __name__ == '__main__':
     # For [CycleGAN]: It should not affect CycleGAN as CycleGAN uses instancenorm without dropout.
     if opt.eval:
         model.eval()
+
+    num_test = 500
+
+    print(len(dataset))
     for i, data in enumerate(dataset):
-        if i >= opt.num_test:  # only apply our model to opt.num_test images.
+        print(data['distance_label'])
+        distance_label = float(data['distance_label'].cpu().numpy())
+        if i >= num_test:  # only apply our model to opt.num_test images.
             break
         model.set_input(data)  # unpack data from data loader
         model.test()           # run inference
         visuals = model.get_current_visuals()  # get image results
         img_path = model.get_image_paths()     # get image paths
+        if distance_label != -0.7894737124443054:
+            what = 'yes'
+            grayson_visualize(visuals, f'test_img_{i}.png')
         if i % 5 == 0:  # save images to an HTML file
             print('processing (%04d)-th image... %s' % (i, img_path))
+
         save_images(webpage, visuals, img_path, aspect_ratio=opt.aspect_ratio, width=opt.display_winsize, use_wandb=opt.use_wandb)
     webpage.save()  # save the HTML

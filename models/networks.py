@@ -117,7 +117,8 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     return net
 
 
-def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[], use_dist_labels=False):
+def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', 
+             init_gain=0.02, gpu_ids=[], use_dist_labels=False, dist_label_type=None):
     """Create a generator
 
     Parameters:
@@ -152,9 +153,11 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     elif netG == 'resnet_6blocks':
         net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=6)
     elif netG == 'unet_128':
-        net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout, use_dist_labels=use_dist_labels)
+        net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout, 
+                            use_dist_labels=use_dist_labels, dist_label_type=dist_label_type)
     elif netG == 'unet_256':
-        net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout, use_dist_labels=use_dist_labels)
+        net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout, 
+                            use_dist_labels=use_dist_labels, dist_label_type=dist_label_type)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -471,7 +474,8 @@ class ConditionalUnetGenerator(nn.Module):
 class UnetGenerator(nn.Module):
     """Create a Unet-based generator that takes in image and positional value."""
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, use_dist_labels=False):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, use_dist_labels=False,
+                 dist_label_type=None):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -489,7 +493,7 @@ class UnetGenerator(nn.Module):
         if not use_dist_labels:
             unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)  # add the innermost layer
         else:
-            unet_block = ConditionalUnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)  # add the innermost layer
+            unet_block = ConditionalUnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True, dist_label_type=dist_label_type)  # add the innermost layer
         for i in range(num_downs - 5):          # add intermediate layers with ngf * 8 filters
             unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout)
         # gradually reduce the number of filters from ngf * 8 to ngf
@@ -510,7 +514,8 @@ class ConditionalUnetSkipConnectionBlock(nn.Module):
     """
 
     def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
+                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False,
+                 dist_label_type=None):
         """Construct a Unet submodule with skip connections.
 
         Parameters:
@@ -540,7 +545,10 @@ class ConditionalUnetSkipConnectionBlock(nn.Module):
         self.upnorm = norm_layer(outer_nc)
         
         # code for adding the conditional
-        self.embed_label = nn.Conv2d(1, 128, 1)
+        if dist_label_type == '1D':
+            self.embed_label = nn.Conv2d(1, 128, 1)
+        else:
+            self.embed_label = nn.Conv2d(4, 128, 1)
         
         # code for 1x1 conv to change the channels to the correct number of
         # channels
@@ -579,8 +587,12 @@ class ConditionalUnetSkipConnectionBlock(nn.Module):
             out = self.down(x)
             
             # unsqueeze the distance label
-            distance_label = torch.unsqueeze(distance_label, 1)
-            distance_label = torch.unsqueeze(distance_label, 1)
+            if distance_label.size()[1] == 4:
+                distance_label = torch.unsqueeze(distance_label, 2)
+                distance_label = torch.unsqueeze(distance_label, 2)
+            else:
+                distance_label = torch.unsqueeze(distance_label, 1)
+                distance_label = torch.unsqueeze(distance_label, 1)
             embedded_label = self.embed_label(distance_label)
             
             # concatenate the output and embedded label
